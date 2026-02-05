@@ -1,0 +1,116 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    networks:
+      - app-network
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  mysql_db:
+    image: mysql:8.0
+    container_name: mysql_db
+    networks:
+      - app-network
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      timeout: 20s
+      retries: 10
+    restart: always
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: backend
+    networks:
+      - app-network
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      DB_HOST: mysql_db
+      DB_PORT: 3306
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      ML_DEVICE: cpu
+      LPD_MODEL_PATH: /app/lpr/models/lpd/license_plate_detector.pt
+      LPR_MODEL_PATH: /app/lpr/models/lpr/evaluated_ocr_model.pt
+    depends_on:
+      mysql_db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./lpr:/app/lpr
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini
+      - ./api.py:/app/api.py
+      - uploads:/uploads
+
+    dns:
+      - 192.168.13.1
+      - 192.168.8.10
+      - 192.168.8.20
+
+    sysctls:
+      - net.ipv4.ip_forward=1
+    cap_add:
+      - NET_ADMIN
+    restart: always
+
+  streamlit_frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    container_name: streamlit_frontend
+    networks:
+      - app-network
+    ports:
+      - "8501:8501"
+    environment:
+      API_BASE: http://backend:8000
+    depends_on:
+      - backend
+    volumes:
+      - ./str_app.py:/app/str_app.py
+      - ./lpr:/app/lpr
+    restart: always
+
+volumes:
+  redis_data:
+  mysql_data:
+  uploads:
+
+networks:
+  app-network:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "true"
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.25.0.0/16
+          gateway: 172.25.0.1

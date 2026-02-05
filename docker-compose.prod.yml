@@ -1,0 +1,40 @@
+# Docker Compose Override for Production
+# This file adds Celery beat scheduler to the backend service
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    command: >
+      sh -c "alembic upgrade head &&
+             celery -A lpr.app.celery_app worker --beat
+             --loglevel=INFO --concurrency=2 &
+             sleep 5 &&
+             uvicorn api:app --host 0.0.0.0 --port 8000 --workers 4"
+    environment:
+      - ENABLE_AUTO_PROCESSING=true
+      - POLLING_INTERVAL_MINUTES=5
+    volumes:
+      - ./lpr:/app/lpr
+      - ./api.py:/app/api.py
+      - ./entrypoint.sh:/app/entrypoint.sh
+      - celery_logs:/app/logs
+    restart: always
+    depends_on:
+      mysql_db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  redis:
+    volumes:
+      - redis_data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+
+volumes:
+  celery_logs:
+    driver: local
+

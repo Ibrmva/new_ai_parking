@@ -1,0 +1,40 @@
+Failure # 1 (occurred at 2025-11-06_20-41-34)
+[36mray::ImplicitFunc.train()[39m (pid=12237, ip=127.0.0.1, actor_id=3e39686150b24614446db0c001000000, repr=trainable)
+  File "/Users/gulaiymibraimova/ai_app/venv/lib/python3.13/site-packages/ray/tune/trainable/trainable.py", line 331, in train
+    raise skipped from exception_cause(skipped)
+  File "/Users/gulaiymibraimova/ai_app/venv/lib/python3.13/site-packages/ray/air/_internal/util.py", line 107, in run
+    self._ret = self._target(*self._args, **self._kwargs)
+                ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/gulaiymibraimova/ai_app/venv/lib/python3.13/site-packages/ray/tune/trainable/function_trainable.py", line 44, in <lambda>
+    training_func=lambda: self._trainable_func(self.config),
+                          ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/Users/gulaiymibraimova/ai_app/venv/lib/python3.13/site-packages/ray/tune/trainable/function_trainable.py", line 249, in _trainable_func
+    output = fn()
+  File "/Users/gulaiymibraimova/ai_app/venv/lib/python3.13/site-packages/ray/tune/trainable/util.py", line 130, in inner
+    return trainable(config, **fn_kwargs)
+  File "/Users/gulaiymibraimova/ai_app/lpr/app/train/tune.py", line 111, in trainable
+    trainer.fit(model, datamodule=datamodule, ckpt_path=ckpt_path)
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/gulaiymibraimova/ai_app/venv/lib/python3.13/site-packages/pytorch_lightning/trainer/trainer.py", line 560, in fit
+    call._call_and_handle_interrupt(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        self, self._fit_impl, model, train_dataloaders, val_dataloaders, datamodule, ckpt_path
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/gulaiymibraimova/ai_app/venv/lib/python3.13/site-packages/pytorch_lightning/trainer/call.py", line 49, in _call_and_handle_interrupt
+    return trainer_fn(*args, **kwargs)
+  File "/Users/gulaiymibraimova/ai_app/venv/lib/python3.13/site-packages/pytorch_lightning/trainer/trainer.py", line 598, in _fit_impl
+    self._run(model, ckpt_path=ckpt_path)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/gulaiymibraimova/ai_app/venv/lib/python3.13/site-packages/pytorch_lightning/trainer/trainer.py", line 1002, in _run
+    self._checkpoint_connector.restore_training_state()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/Users/gulaiymibraimova/ai_app/venv/lib/python3.13/site-packages/pytorch_lightning/trainer/connectors/checkpoint_connector.py", line 304, in restore_training_state
+    self.restore_loops()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "/Users/gulaiymibraimova/ai_app/venv/lib/python3.13/site-packages/pytorch_lightning/trainer/connectors/checkpoint_connector.py", line 362, in restore_loops
+    raise MisconfigurationException(
+    ...<2 lines>...
+    )
+lightning_fabric.utilities.exceptions.MisconfigurationException: You restored a checkpoint with current_epoch=49, but you have set Trainer(max_epochs=10).

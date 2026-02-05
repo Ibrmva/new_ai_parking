@@ -1,0 +1,9 @@
+/Users/gulaiymibraimova/ai_app/venv/lib/python3.13/site-packages/timm/models/helpers.py:7: FutureWarning: Importing from timm.models.helpers is deprecated, please import via timm.models
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.models", FutureWarning)
+Using 16bit Automatic Mixed Precision (AMP)
+/Users/gulaiymibraimova/ai_app/venv/lib/python3.13/site-packages/pytorch_lightning/plugins/precision/amp.py:54: torch.cuda.amp.GradScaler is enabled, but CUDA is not available.  Disabling.
+GPU available: True (mps), used: True
+TPU available: False, using: 0 TPU cores
+HPU available: False, using: 0 HPUs
+`Trainer(val_check_interval=1)` was configured so validation will run after every batch.
+[mutex.cc : 452] RAW: Lock blocking 0x122aecb58   @

@@ -1,0 +1,5 @@
+data:
+  root_dir: lpr/app/datasets/data_img
+  train_dir: train
+  val_dir: validation 
+  num_workers: 4

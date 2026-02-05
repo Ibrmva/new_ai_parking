@@ -1,0 +1,39 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    git \
+    wget \
+    curl \
+    libjpeg-dev \
+    libpng-dev \
+    libtiff-dev \
+    libavcodec-dev \
+    libavformat-dev \
+    libswscale-dev \
+    pkg-config \
+    libglib2.0-0 \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements_backend.txt .
+
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir --timeout 600 -r requirements_backend.txt
+
+COPY lpr ./lpr
+COPY alembic ./alembic
+COPY alembic.ini ./alembic.ini
+COPY api.py ./api.py
+COPY entrypoint.sh ./entrypoint.sh
+
+RUN chmod +x entrypoint.sh
+RUN mkdir -p /app/lpr/models/lpd /app/lpr/models/lpr /uploads /app/logs
+
+EXPOSE 8000
+
+CMD ["./entrypoint.sh"]
+

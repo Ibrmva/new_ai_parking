@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Recognition Result</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            text-align: center; 
+            padding: 20px; 
+            background-color: #f9f9f9;
+            color: #333;
+        }
+
+        h1 { 
+            font-size: 36px; 
+            margin-bottom: 30px; 
+            color: #222;
+        }
+
+        /* Style for recognized text and confidence */
+        p.result-text { 
+            font-size: 50px;  /* Bigger text */
+            font-weight: bold; /* Bold text */
+            margin: 15px 0;
+        }
+
+        img { 
+            max-width: 400px; 
+            height: auto; 
+            margin-top: 20px;
+            border: 2px solid #ccc;
+            border-radius: 8px;
+        }
+
+        a { 
+            display: inline-block; 
+            margin: 20px 10px 0 10px; 
+            text-decoration: none; 
+            color: white; 
+            background-color: #007BFF; 
+            padding: 10px 20px; 
+            border-radius: 5px; 
+            font-size: 18px;
+        }
+
+        a:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <h1>Recognition Result</h1>
+    <p class="result-text"><strong>Recognized Text:</strong> {{ text }}</p>
+    <p class="result-text"><strong>Confidences:</strong> {{ confidences }}</p>
+    <img src="{{ url_for('static', filename=image) }}" alt="Uploaded Image" />
+    <br/>
+    <a href="/">Upload Another Image</a> 
+    <a href="/history">View History</a>
+</body>
+</html>

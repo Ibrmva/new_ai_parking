@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Recognition Result</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
+        img { max-width: 100%; height: auto; }
+    </style>
+</head>
+<body>
+    <h1>Recognition Result</h1>
+    <p><strong>Recognized Text:</strong> {{ text }}</p>
+    <p><strong>Confidences:</strong> {{ confidences }}</p>
+    <img src="{{ url_for('static', filename=image) }}" alt="Uploaded Image" style="max-width: 400px;" />
+    <br/>
+    <a href="/">Upload Another Image</a> | <a href="/history">View History</a>
+</body>
+</html>

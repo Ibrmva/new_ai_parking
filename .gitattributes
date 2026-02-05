@@ -1,0 +1,8 @@
+*.pt filter=lfs diff=lfs merge=lfs -text
+*.ckpt filter=lfs diff=lfs merge=lfs -text
+*.pth filter=lfs diff=lfs merge=lfs -text
+lpr/models/lpr/*.pt filter=lfs diff=lfs merge=lfs -text
+lpr/models/lpd/*.pt filter=lfs diff=lfs merge=lfs -text
+sort/data/train/*.pth filter=lfs diff=lfs merge=lfs -text
+*.pkl filter=lfs diff=lfs merge=lfs -text
+.csv filter=lfs diff=lfs merge=lfs -text

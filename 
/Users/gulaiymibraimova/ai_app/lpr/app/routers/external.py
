@@ -1,0 +1,368 @@
+
+import os
+import cv2
+import numpy as np
+import base64
+import httpx
+import logging
+from datetime import datetime, timezone, timedelta
+from fastapi import APIRouter, UploadFile, File, HTTPException
+from sqlalchemy.future import select
+from lpr.app.ml_utils import ml_service
+from lpr.app.database import async_session
+from lpr.app.models import Plate
+from uuid import uuid4
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+EXTERNAL_API = os.getenv("EXTERNAL_API")
+PLATE_IMAGE_URLL = os.getenv("PLATE_IMAGE_URLL")
+PLATE_RECOGNITION_ADD_URL = os.getenv("PLATE_RECOGNITION_ADD_URL")
+EXTERNAL_RECOGNITION_URL = os.getenv("EXTERNAL_RECOGNITION_URL")
+CAMERA_LIST_URL = os.getenv("CAMERA_LIST_URL")
+
+# Log configured URLs on module load
+logger.info(f"EXTERNAL_API configured: {EXTERNAL_API}")
+logger.info(f"PLATE_IMAGE_URLL configured: {PLATE_IMAGE_URLL}")
+logger.info(f"PLATE_RECOGNITION_ADD_URL configured: {PLATE_RECOGNITION_ADD_URL}")
+logger.info(f"EXTERNAL_RECOGNITION_URL configured: {EXTERNAL_RECOGNITION_URL}")
+logger.info(f"CAMERA_LIST_URL configured: {CAMERA_LIST_URL}")
+
+
+async def send_plate_result_to_external_recognition(client, plate):
+    """Send plate detection results to external recognition API."""
+    payload = {
+        "id": plate["id"],
+        "imageId": plate.get("imageId", plate["id"]),
+        "detectedText": plate["detectedText"],
+        "confidence": float(plate["confidence"]),
+        "createdAt": plate["createdAt"],
+        "bbox": plate.get("bbox", ""),
+        "image": plate["image"],
+        "overwrite": False  
+    }
+    
+    logger.info(f"Sending to EXTERNAL_RECOGNITION_URL: {EXTERNAL_RECOGNITION_URL}")
+    logger.info(f"Payload: id={plate['id']}, detectedText={plate['detectedText']}, confidence={plate['confidence']}")
+    
+    try:
+        response = await client.post(EXTERNAL_RECOGNITION_URL, json=payload)
+        logger.info(f"External Recognition API response: status={response.status_code}, body={response.text[:500] if response.text else 'empty'}")
+        return {"status": response.status_code, "body": response.text}
+    except Exception as e:
+        logger.error(f"External Recognition API error: {str(e)}")
+        return {"status": 0, "body": str(e)}
+
+
+async def send_plate_result_to_external_db(client, plate):
+    """Send plate detection results to external database."""
+    payload = {
+        "id": plate["id"],
+        "filename": plate["filename"],
+        "detectedText": plate["detectedText"],
+        "confidence": float(plate["confidence"]),
+        "createdAt": plate["createdAt"],
+        "cameraId": 1 if plate["cameraId"] == "external" else 0,
+        "bbox": plate.get("bbox", ""),
+        "image": plate["image"],
+        "overwrite": False 
+    }
+    
+    logger.info(f"Sending to PLATE_RECOGNITION_ADD_URL: {PLATE_RECOGNITION_ADD_URL}")
+    logger.info(f"Payload: id={plate['id']}, detectedText={plate['detectedText']}, confidence={plate['confidence']}")
+    
+    if not PLATE_RECOGNITION_ADD_URL:
+        logger.warning("PLATE_RECOGNITION_ADD_URL is not set! Skipping external DB call.")
+        return {"status": 0, "body": "URL not configured"}
+    
+    try:
+        response = await client.post(PLATE_RECOGNITION_ADD_URL, json=payload)
+        logger.info(f"External DB API response: status={response.status_code}, body={response.text[:500] if response.text else 'empty'}")
+        return {"status": response.status_code, "body": response.text}
+    except Exception as e:
+        logger.error(f"External DB API error: {str(e)}")
+        return {"status": 0, "body": str(e)}
+
+
+async def recognize_and_store_plate(image_bytes, filename, camera_id="local", external_image_id=None):
+    """Process an image, detect plates, recognize text, and store results in local DB."""
+    np_img = np.frombuffer(image_bytes, np.uint8)
+    image = cv2.imdecode(np_img, cv2.IMREAD_COLOR)
+    if image is None:
+        logger.warning(f"Failed to decode image: {filename}")
+        return []
+    
+    logger.info(f"Processing image: {filename}, camera_id={camera_id}, external_image_id={external_image_id}")
+    
+    temp_path = f"tmp_{uuid4()}.jpg"
+    cv2.imwrite(temp_path, image)
+    detections = ml_service.detect_plates(temp_path)
+    os.remove(temp_path)
+    
+    logger.info(f"Detected {len(detections)} plates in {filename}")
+    
+    results = []
+    async with async_session() as session:
+        for plate in detections:
+            cropped = plate["cropped_image"]
+            text, (_, confs) = ml_service.recognize("lpr", cropped)
+            confidence = float(np.mean([float(c) for c in confs])) if confs else 0.0
+            last = await session.execute(select(Plate.track_id).order_by(Plate.track_id.desc()))
+            track_id = (last.scalars().first() or 0) + 1
+            crop_bytes = cv2.imencode(".jpg", cropped)[1].tobytes()
+            created_at = datetime.now(timezone(timedelta(hours=6)))
+            record = Plate(
+                filename=filename,
+                detected_text=text,
+                confidence=str(confidence),
+                camera_id=camera_id,
+                image=crop_bytes,
+                track_id=track_id,
+                created_at=created_at,
+                image_id=external_image_id  
+            )
+            session.add(record)
+            await session.commit()
+            await session.refresh(record)
+            created_iso = record.created_at.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+            results.append({
+                "id": record.id,
+                "imageId": external_image_id if external_image_id else record.id,
+                "filename": filename,
+                "detectedText": text,
+                "confidence": confidence,
+                "createdAt": created_iso,
+                "cameraId": camera_id,
+                "trackId": track_id,
+                "bbox": "",
+                "image": base64.b64encode(crop_bytes).decode()
+            })
+            logger.info(f"Stored plate: id={record.id}, text={text}, confidence={confidence}")
+    return results
+
+
+async def download_image(client, url, filename):
+    """Download an image from a URL and return its content."""
+    logger.info(f"Downloading image from: {url}")
+    response = await client.get(url)
+    if response.status_code != 200:
+        logger.warning(f"Failed to download image: {url}, status={response.status_code}")
+        return None
+    logger.info(f"Successfully downloaded: {filename}, size={len(response.content)} bytes")
+    return {"content": response.content, "filename": filename}
+
+
+@router.post("/upload_image")
+async def upload_image(file: UploadFile = File(...)):
+    """Upload and process a local image file."""
+    image_bytes = await file.read()
+    local_results = await recognize_and_store_plate(image_bytes, file.filename)
+    
+    async with httpx.AsyncClient(verify=False) as client:
+        external_posts = []
+        for plate in local_results:
+            result = await send_plate_result_to_external_recognition(client, plate)
+            external_posts.append(result)
+    
+    return {"local_results": local_results, "external_posts": external_posts}
+
+
+async def process_remote_images_logic():
+    """Core logic for processing remote images."""
+    logger.info("Starting process_remote_images_logic")
+    
+    if not EXTERNAL_API:
+        logger.error("EXTERNAL_API is not configured!")
+        return {"error": "EXTERNAL_API not configured", "total": 0, "processed": []}
+    
+    results = []
+    async with httpx.AsyncClient(verify=False) as client:
+        logger.info(f"Fetching images from: {EXTERNAL_API}")
+        response = await client.get(EXTERNAL_API)
+        logger.info(f"EXTERNAL_API response status: {response.status_code}")
+        
+        if response.status_code != 200:
+            logger.error(f"Failed to fetch images: {response.text}")
+            return {"error": f"API returned {response.status_code}", "total": 0, "processed": []}
+        
+        data = response.json()
+        images = [
+            {
+                "url": f"{PLATE_IMAGE_URLL.rstrip('/')}/{item['image'].lstrip('/')}" if PLATE_IMAGE_URLL else item["image"],
+                "filename": item["image"].split("/")[-1],
+                "external_id": item["id"]
+            }
+            for item in data.get("res", [])
+        ]
+        
+        logger.info(f"Found {len(images)} images to process")
+        
+        for img in images:
+            downloaded = await download_image(client, img["url"], img["filename"])
+            if not downloaded:
+                continue
+            
+            plates = await recognize_and_store_plate(
+                downloaded["content"],
+                downloaded["filename"],
+                camera_id="external",
+                external_image_id=img["external_id"]
+            )
+            
+            recognition_posts = []
+            db_posts = []
+            
+            for plate in plates:
+                logger.info(f"Sending plate result: text={plate['detectedText']}, id={plate['id']}")
+                
+                # Send to external recognition API
+                recognition_post_result = await send_plate_result_to_external_recognition(client, plate)
+                recognition_posts.append(recognition_post_result)
+                
+                # Send to external database
+                if PLATE_RECOGNITION_ADD_URL:
+                    db_post_result = await send_plate_result_to_external_db(client, plate)
+                    db_posts.append(db_post_result)
+                else:
+                    logger.warning("PLATE_RECOGNITION_ADD_URL not set, skipping external DB")
+            
+            results.append({
+                "filename": img["filename"],
+                "external_id": img["external_id"],
+                "plates": plates,
+                "external_posts": recognition_posts,
+                "db_posts": db_posts
+            })
+    
+    logger.info(f"Completed process_remote_images_logic: processed {len(results)} images")
+    return {"total": len(results), "processed": results}
+
+
+@router.post("/external/process_remote_images")
+async def process_remote_images():
+    """FastAPI endpoint for processing remote images."""
+    return await process_remote_images_logic()
+
+
+@router.post("/external/webhook/new_image")
+async def webhook_new_image(image_data: dict):
+    """Webhook endpoint - processes images immediately."""
+    external_id = image_data.get("id")
+    image_url = image_data.get("image")
+    
+    logger.info(f"Webhook received: id={external_id}, image={image_url}")
+    
+    if not image_url:
+        raise HTTPException(status_code=400, detail="Missing 'image' field")
+    
+    filename = image_url.split("/")[-1] if "/" in image_url else image_url
+    
+    async with httpx.AsyncClient(verify=False) as client:
+        # Download the image
+        downloaded = await download_image(client, image_url, filename)
+        
+        if not downloaded:
+            raise HTTPException(status_code=400, detail=f"Failed to download image from {image_url}")
+        
+        # Process immediately
+        plates = await recognize_and_store_plate(
+            downloaded["content"],
+            downloaded["filename"],
+            camera_id="external",
+            external_image_id=external_id
+        )
+        
+        logger.info(f"Webhook processed {len(plates)} plates")
+        
+        # Send results to both external recognition and external DB
+        recognition_posts = []
+        db_posts = []
+        
+        for plate in plates:
+            recognition_post_result = await send_plate_result_to_external_recognition(client, plate)
+            recognition_posts.append(recognition_post_result)
+            
+            if PLATE_RECOGNITION_ADD_URL:
+                db_post_result = await send_plate_result_to_external_db(client, plate)
+                db_posts.append(db_post_result)
+    
+    return {
+        "status": "processed",
+        "image_id": external_id,
+        "filename": filename,
+        "plates_found": len(plates),
+        "results": plates,
+        "external_posts": recognition_posts,
+        "db_posts": db_posts
+    }
+
+
+@router.post("/capture_camera/{camera_id}")
+async def capture_camera(camera_id: str):
+    """Capture a frame from an RTSP camera and process it."""
+    if not CAMERA_LIST_URL:
+        raise HTTPException(status_code=500, detail="CAMERA_LIST_URL not set")
+    
+    async with httpx.AsyncClient(timeout=10, verify=False) as client:
+        response = await client.get(CAMERA_LIST_URL)
+        response.raise_for_status()
+        cameras = response.json().get("res", [])
+        cam = next((c for c in cameras if str(c.get("id")) == camera_id), None)
+    
+    if not cam:
+        raise HTTPException(status_code=404, detail="Camera not found")
+    
+    user = cam.get("rtspUser")
+    password = cam.get("rtspPass")
+    host = cam.get("rtspHost")
+    port = cam.get("rtspPort", "554")
+    path = cam.get("rtspPath", "/")
+    rtsp_url = f"rtsp://{user}:{password}@{host}:{port}{path}"
+    
+    cap = cv2.VideoCapture(rtsp_url)
+    try:
+        ret, frame = cap.read()
+        if not ret:
+            raise HTTPException(status_code=500, detail="Failed to capture frame")
+        
+        _, img_bytes = cv2.imencode(".jpg", frame)
+        result = await recognize_and_store_plate(
+            img_bytes.tobytes(),
+            filename=f"{camera_id}.jpg",
+            camera_id="external"
+        )
+        
+        async with httpx.AsyncClient(verify=False) as client:
+            for plate in result:
+                await send_plate_result_to_external_recognition(client, plate)
+        
+        return {"plates": result}
+    finally:
+        cap.release()
+
+
+@router.get("/external/plate/{image_id}")
+async def get_plate_by_image_id(image_id: int):
+    """Retrieve a plate record by its external image_id."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Plate).where(Plate.image_id == image_id).order_by(Plate.created_at.desc())
+        )
+        plate = result.scalars().first()
+        if not plate:
+            raise HTTPException(status_code=404, detail="Plate not found")
+
+        created_at_iso = plate.created_at.isoformat(timespec="milliseconds").replace("+00:00", "Z") if plate.created_at else ""
+
+        return {
+            "id": plate.id,
+            "imageId": plate.image_id if plate.image_id else plate.id,
+            "detectedText": plate.detected_text,
+            "confidence": float(plate.confidence) if plate.confidence else 0.0,
+            "createdAt": created_at_iso,
+            "bbox": plate.bbox or "",
+            "image": base64.b64encode(plate.image).decode() if plate.image else ""
+        }
+
